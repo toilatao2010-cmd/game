@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Money Clicker Game (500 Levels)</title>
+<style>
+:root{--bg:#071028;--card:#0b1220;--muted:#94a3b8;--accent:#f59e0b}
+*{box-sizing:border-box;font-family:Inter,Arial,Helvetica,sans-serif}
+body{margin:0;background:linear-gradient(180deg,#021020,#071028);color:#e6eef8;padding:18px}
+.wrap{max-width:980px;margin:0 auto;display:grid;grid-template-columns:1fr 320px;gap:16px}
+.card{background:var(--card);padding:12px;border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,0.6); display:flex; flex-direction:column; align-items:center;}
+h1{margin:0 0 8px 0;font-size:18px; text-align:center;}
+button{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:8px 10px;border-radius:8px;color:inherit;cursor:pointer}
+.muted{color:var(--muted);font-size:13px}
+.center{text-align:center; margin-top:20px}
+.upgrades{display:grid;grid-template-columns:1fr;gap:8px;margin-top:8px}
+.progress{height:12px;background:rgba(255,255,255,0.04);border-radius:8px;overflow:hidden}
+.bar{height:100%;background:linear-gradient(90deg,#f59e0b,#f97316)}
+input[type=number]{width:80px}
+@media(max-width:900px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<h1>Money Clicker Game (500 Levels)</h1>
+<div class="wrap">
+  <div class="card">
+    <div class="center" style="margin-bottom:20px">
+      <div class="muted">ID: <span id="userIdDisplay"></span></div>
+      <div class="muted">Name: <span id="userNameDisplay"></span></div>
+      <button id="btnSetName">Set Name</button>
+      <div class="muted">Current Level: <span id="levelDisplay">1 / 500</span></div>
+      <div class="muted">Money: <span id="moneyDisplay">0₫</span></div>
+      <div class="muted">Click: <span id="clickCounterDisplay">0</span>/<span id="clickNeededDisplay">2</span></div>
+      <button id="earnBtn" style="font-size:20px;padding:12px 24px; margin-top:10px">Click to Earn Money</button>
+      <div class="muted" style="margin-top:6px">Money per click: <span id="clickValue">10,000₫</span></div>
+    </div>
+
+    <div class="progress" style="width:80%; margin-top:20px"><div id="levelBar" class="bar" style="width:0%"></div></div>
+
+    <div style="margin-top:10px">
+      <div class="muted">History</div>
+      <div id="logBox" style="max-height:160px;overflow:auto;padding-top:6px"></div>
+    </div>
+  </div>
+
+  <aside class="card">
+    <div>
+      <div class="muted">Upgrade Shop</div>
+      <div class="upgrades" id="upgradesList"></div>
+    </div>
+
+    <hr style="border:none;border-top:1px dashed rgba(255,255,255,0.03);margin:12px 0" />
+
+    <div>
+      <div class="muted">Settings</div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button id="btnReset">Reset</button>
+        <button id="btnExport">Export</button>
+        <button id="btnImport">Import</button>
+      </div>
+      <input id="importArea" placeholder='Paste JSON here for Import' style="width:100%;margin-top:8px;padding:6px;border-radius:6px;background:transparent;border:1px solid rgba(255,255,255,0.06);color:inherit" />
+    </div>
+  </aside>
+</div>
+
+<script>
+function generateId(){ return 'id-' + Math.random().toString(36).substr(2,9); }
+
+const state = {
+  id: generateId(),
+  name: '',
+  level:1,
+  money:0,
+  upgrades:{click:0, auto:0, clickReduce:0},
+  levelBonus:10000,
+  clickCounter:0,
+  clickNeeded:2,
+  discount:0.2
+};
+const LEVELS = 500;
+const BASE_CLICK_AMOUNT = 10000;
+let lastClickTime = 0;
+
+const UPGRADE_DEFS = [
+  {id:'click', title:'Increase Click Money', desc:'Increase money per click by 10,000₫', baseCost:5000, costMult:1.3, max:500},
+  {id:'auto', title:'Auto Income', desc:'Get money automatically per second', baseCost:10000, costMult:1.4, max:500},
+  {id:'clickReduce', title:'Reduce Clicks for Level Up', desc:'Reduce 5% click needed per level', baseCost:8000, costMult:1.4, max:50}
+];
+
+function save(){ localStorage.setItem('money_game_v9', JSON.stringify(state)); }
+function load(){
+  const s = localStorage.getItem('money_game_v9');
+  if(s){ try{ Object.assign(state,JSON.parse(s)); }catch(e){} }
+  state.upgrades = state.upgrades || {click:0, auto:0, clickReduce:0};
+  state.clickCounter = state.clickCounter || 0;
+  state.clickNeeded = state.clickNeeded || 2;
+}
+
+function format(n){return n.toLocaleString('vi-VN') + '₫';}
+function addLog(txt){ const box = document.getElementById('logBox'); const d = document.createElement('div'); d.style.padding='6px 0'; d.textContent = txt; box.prepend(d); }
+function getClickValue(){ return BASE_CLICK_AMOUNT + (state.upgrades.click||0)*10000; }
+function computeClickNeeded(){ return Math.max(1, Math.ceil(state.level * 0.5 * Math.pow(0.95, state.upgrades.clickReduce||0))); }
+
+function renderUpgrades(){
+  const upEl = document.getElementById('upgradesList'); 
+  upEl.innerHTML=''; 
+  UPGRADE_DEFS.forEach(def=>{
+    const lvl = state.upgrades[def.id]||0;
+    let cost = Math.floor(def.baseCost * Math.pow(def.costMult, lvl));
+    if(state.discount && state.discount>0) cost = Math.floor(cost * (1 - state.discount));
+    const box = document.createElement('div'); 
+    box.style.padding='8px'; 
+    box.style.border='1px solid rgba(255,255,255,0.03)'; 
+    box.style.borderRadius='8px'; 
+    box.innerHTML = `<div style='display:flex;justify-content:space-between;align-items:center'>
+      <div><strong>${def.title}</strong><div class='muted' style='font-size:12px'>${def.desc}</div></div>
+      <div style='text-align:right'>
+        <div class='muted'>Level ${lvl}/${def.max}</div>
+        <div style='margin-top:6px'>${format(cost)}</div>
+      </div>
+    </div>`; 
+    const btn = document.createElement('button'); 
+    btn.textContent='Buy'; 
+    btn.style.marginTop='8px'; 
+    btn.onclick = ()=>{
+      if(lvl >= def.max) return alert('Already max level'); 
+      if(state.money < cost) return alert('Not enough money'); 
+      state.money -= cost;
+      state.upgrades[def.id] = lvl+1; 
+      addLog(`Bought ${def.title} to level ${lvl+1} (-${format(cost)})`);
+      save(); render(); renderUpgrades();
+    };
+    box.appendChild(btn);
+    upEl.appendChild(box);
+  });
+}
+
+function render(){
+  document.getElementById('levelDisplay').textContent = state.level + ' / ' + LEVELS;
+  document.getElementById('moneyDisplay').textContent = format(state.money);
+  document.getElementById('clickCounterDisplay').textContent = state.clickCounter;
+  state.clickNeeded = computeClickNeeded();
+  document.getElementById('clickNeededDisplay').textContent = state.clickNeeded;
+  document.getElementById('clickValue').textContent = format(getClickValue());
+  document.getElementById('userIdDisplay').textContent = state.id;
+  document.getElementById('userNameDisplay').textContent = state.name || '(not set)';
+  const pct = Math.min(100, Math.round(state.clickCounter / state.clickNeeded * 100));
+  document.getElementById('levelBar').style.width = pct + '%';
+}
+
+document.getElementById('btnSetName').addEventListener('click', ()=>{
+  const name = prompt('Enter your name:', state.name||'');
+  if(name){ state.name = name.trim(); save(); render(); }
+});
+
+document.getElementById('earnBtn').addEventListener('click', ()=>{
+  const now = Date.now();
+  if(lastClickTime && (now - lastClickTime < 30)){ // <30ms -> cheat
+    alert('Cheating detected! All game data will be deleted.');
+    localStorage.removeItem('money_game_v9');
+    location.reload();
+    return;
+  }
+  lastClickTime = now;
+
+  if(state.level < LEVELS){
+    state.clickCounter += 1;
+    const clickValue = getClickValue();
+    state.money += clickValue;
+    addLog(`Earned ${format(clickValue)} from click`);
+    addLog(`Click ${state.clickCounter}/${state.clickNeeded}`);
+
+    if(state.clickCounter >= state.clickNeeded){
+      state.level += 1;
+      state.clickCounter = 0;
+      const bonus = state.levelBonus;
+      state.money += bonus;
+      addLog(`Level Up! Now level ${state.level}, received bonus ${format(bonus)}`);
+      state.levelBonus = Math.floor(bonus * 0.5);
+      state.clickNeeded = computeClickNeeded();
+    }
+  } else addLog('Max level reached!');
+  save(); render(); renderUpgrades();
+});
+
+setInterval(()=>{
+  const autoLvl = state.upgrades.auto || 0;
+  if(autoLvl > 0){
+    const income = autoLvl * 5000;
+    state.money += income;
+    addLog(`Auto income: ${format(income)}`);
+    save(); render();
+  }
+},1000);
+
+document.getElementById('btnReset').addEventListener('click', ()=>{ 
+  if(confirm('Reset game?')){ localStorage.removeItem('money_game_v9'); location.reload(); }
+});
+document.getElementById('btnExport').addEventListener('click', ()=>{
+  const data = JSON.stringify(state); navigator.clipboard && navigator.clipboard.writeText(data); alert('Game JSON copied to clipboard'); 
+});
+document.getElementById('btnImport').addEventListener('click', ()=>{
+  const v = document.getElementById('importArea').value.trim(); 
+  if(!v) return alert('Paste JSON to import'); 
+  try{ const p = JSON.parse(v); Object.assign(state,p); save(); render(); renderUpgrades(); alert('Import successful'); }catch(e){ alert('Invalid JSON'); }
+});
+
+load(); render(); renderUpgrades();
+</script>
+</body>
+</html>
